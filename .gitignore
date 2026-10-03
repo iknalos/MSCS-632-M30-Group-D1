@@ -1,0 +1,4 @@
+target/
+*.exe
+chat
+chat_go
