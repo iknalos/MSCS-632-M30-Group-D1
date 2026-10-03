@@ -1,110 +1,95 @@
-# ConcurrentChat — Deliverable 1: Planning and Design
+# ExpenseTracker — Deliverable 1: Planning and Design
 
-**MSCS-632-M30 Advanced Programming Language · Group Project (Option 2: Simple Chat Application)**
-**Languages:** Rust and Go · **Instructor:** Jay Thom · **University of the Cumberlands**
+**MSCS-632-M30 Advanced Programming Language · Group Project (Option 1: Expense Tracker Application)**
+**Languages:** Python and C++ · **Instructor:** Jay Thom · **University of the Cumberlands**
 
 | Team member | Primary role |
 |---|---|
-| Rahul Solanki | Rust implementation lead; benchmarking and profiling |
-| Krinal Soni | Go implementation lead; testing and race detection |
+| Rahul Solanki | Python implementation; benchmarking and profiling |
+| Krinal Soni | C++ implementation; testing and memory checking |
 | Bijay Raj KC | Shared specification, documentation, comparison report |
 
-This repository holds the Friday planning deliverable only. Implementation
-lives in the Day 2 and Day 3 repositories listed at the bottom.
+This repository holds the Friday planning deliverable only. Implementation lives
+in the Day 2 and Day 3 repositories listed at the bottom.
 
 ---
 
 ## 1. What we are building
 
-**ConcurrentChat** is a text-based chat application, implemented twice with
-identical behaviour: once in Rust and once in Go. Multiple simulated users send
-messages concurrently to a central hub that owns the message history and
-answers queries against it.
+**ExpenseTracker** is a text-based application for recording, filtering and
+summarising personal expenses, implemented twice with identical behaviour: once
+in Python and once in C++.
 
-### Core requirements (from the assignment)
+### Core requirements
 
 | # | Requirement | How we satisfy it |
 |---|---|---|
-| R1 | Simulate multiple users sending messages to each other | Each user is an independent task (Rust) or goroutine (Go); a `demo` mode runs a scripted concurrent session |
-| R2 | Store message history with timestamp and user ID | Every `Message` carries `id`, `timestamp`, `user_id`, `username`, and a kind-specific payload |
-| R3 | Message filtering and search by user or keyword | Hub queries: `History(limit)`, `ByUser(name)`, `Search(keyword)`, plus a `Stats` summary |
+| R1 | Data storage for expenses with date, amount, category and description | An expense record carries `id`, `date`, `amount`, `category`, `description`; the store assigns the id |
+| R2 | Filter and search by criteria (date range, category) | `by_category(name)`, `in_range(from, to)` and `search(keyword)`, all case-insensitive and inclusive |
+| R3 | Summary showing total by category and overall | `summary()` returns per-category count, total and percentage share, plus the overall total |
 
 ### Language-specific requirements
 
 | Language | Required focus | Our approach |
 |---|---|---|
-| Rust | Memory safety; enums and structs for message types; async concurrency | `enum MessageKind` with per-variant payloads; `struct Message`; Tokio tasks with `mpsc` + `oneshot` channels; history owned by one task so no lock is needed |
-| Go | Goroutines and channels for message passing; performance | Hub goroutine owning the history; `select` loop over a single command channel; `sync.WaitGroup` for lifecycle; throughput benchmark mode |
+| Python | Dictionaries for storage, dynamic typing, `datetime` | Records are dicts in a dict keyed by id, plus a `defaultdict` category index; `amount` accepts int, float or numeric string; dates parsed and compared with `datetime` |
+| C++ | Memory management, structs/classes, STL containers | `struct Expense` with declared fields; `std::vector` owns the records and `std::unordered_map` indexes them; `std::move`, `reserve`, RAII, and no `new`/`delete` anywhere |
 
 ---
 
 ## 2. Architecture
 
-Both implementations use the same shape, so that differences in the code are
-attributable to the languages rather than to differing designs.
+Both implementations use the same two-layer shape so that differences in the
+code are attributable to the languages rather than to differing designs.
 
 ```
-   user task/goroutine  ─┐
-   user task/goroutine  ─┼─► [ command channel ] ─► HUB ─► owns Vec<Message> / []Message
-   user task/goroutine  ─┘                           │
-                                                     └─► reply channel ─► caller
+  CLI driver  ──►  ExpenseStore  ──►  records container
+  (demo / bench / REPL)   │           + category index
+                          └──►  queries: category, date range, keyword, summary
 ```
 
-**Single-owner principle.** The history is owned by the hub alone. Nothing else
-holds a reference to it, so neither implementation needs a mutex. The
-difference we expect to document is *how that guarantee is obtained*: in Rust
-the compiler enforces it through ownership, while in Go it is a convention the
-compiler does not check.
-
-### Components
-
-| Component | Responsibility | Rust | Go |
+| Component | Responsibility | Python | C++ |
 |---|---|---|---|
-| Domain model | Message representation, rendering, predicates | `src/model.rs` | `internal/chat/model.go` |
-| Hub | Owns history; applies posts; answers queries | `src/hub.rs` | `internal/chat/hub.go` |
-| Driver | CLI modes: demo, bench, REPL | `src/main.rs` | `main.go` |
-| Tests | Model predicates and hub behaviour | `#[cfg(test)]` in `model.rs` | `internal/chat/model_test.go` |
-
-### Command set (identical in both)
-
-- `Post { user_id, username, kind }`
-- `Ask { query, reply }` where query is `History{limit}` | `ByUser(name)` | `Search(keyword)`
-- `Stats { reply }`
-- `Shutdown`
+| Record | Build, validate, format one expense | `expense.py` | `expense.hpp` |
+| Store | Hold records; run filters and the summary | `store.py` | `store.hpp` / `store.cpp` |
+| Driver | CLI modes | `main.py` | `main.cpp` |
+| Tests | Record helpers and store queries | `test_expense.py` | `tests.cpp` |
 
 ### CLI modes (identical in both)
 
 | Mode | Purpose |
 |---|---|
-| `demo` | Scripted concurrent session, then filter, search and summary |
-| `bench P M` | `P` concurrent producers × `M` messages each; reports throughput |
-| *(no arguments)* | Interactive REPL: `/send`, `/dm`, `/history`, `/user`, `/search`, `/stats`, `/quit` |
+| `demo` | Seeded dataset, then category filter, date range, keyword search and the summary |
+| `bench N` | Insert `N` expenses and run every query; reports insert and query timings |
+| *(no arguments)* | Interactive prompt: `/add`, `/list`, `/cat`, `/range`, `/search`, `/summary`, `/del`, `/quit` |
 
 ---
 
 ## 3. Anticipated language differences
 
-These are the differences we expect to find. Day 3 reports what we actually
-found, including where we were wrong.
+Recorded before implementation. Day 3 revisits each row and reports where we
+were right and where we were wrong.
 
 | Area | Expectation |
 |---|---|
-| **Sum types** | Rust's `enum` carries a payload per variant and `match` is exhaustive. Go has no sum type, so we expect either a tagged struct with unused fields or an interface plus a type switch, neither of which is exhaustiveness-checked. |
-| **Concurrency model** | Rust uses `async`/`await` over a task scheduler; Go uses goroutines that look synchronous. We expect Go's code to read more simply and Rust's to express more in its types. |
-| **Error handling** | Rust's `Result` must be consumed; Go's `error` return can be silently discarded with `_`. |
-| **Memory management** | Neither needs manual freeing. Rust frees deterministically at scope exit; Go uses a garbage collector, which we expect to show up as higher memory use under load. |
-| **Modularity** | Rust modules with `pub` versus Go packages with capitalisation-based export. |
-| **Performance** | Both compile to native code. We expect them within the same order of magnitude, with Rust ahead because it has no GC and no interface dispatch in the hot path. |
+| **Type systems** | Python accepts an amount as int, float or string and fails only when the bad value is used; C++ fixes the parameter type at compile time, so the same mistake cannot be written |
+| **Data structures** | Python `dict` and C++ `std::unordered_map` are both hash tables, so the algorithmic shape should match and the constant factors should not |
+| **Memory management** | Python reference-counts and collects cycles; C++ containers own their buffers and free them in destructors. We expect C++ to use less memory and to need no explicit `delete` |
+| **Dates** | Python's `datetime` parses, compares and formats out of the box; C++20 `<chrono>` gives a calendar type but we expect to write parsing and formatting ourselves |
+| **Error handling** | Both raise exceptions, but Python surfaces type problems at run time while C++ surfaces most of them at compile time |
+| **Performance** | C++ faster on both insert and query, probably by a single-digit multiple rather than orders of magnitude, since both use hash-indexed containers |
 
 ### Risks identified up front
 
-1. **Ordering.** If commands travel on separate channels, Go's `select` chooses
-   randomly among ready cases, so a query could overtake queued posts. Mitigation:
-   one ordered command channel in both implementations.
-2. **Demo determinism.** Concurrent interleaving differs run to run. Mitigation:
-   assert on counts and filters, not on exact ordering.
-3. **Toolchain parity.** Both must build and run on the same machine so timings
-   are comparable. Mitigation: a single WSL2 Ubuntu 24.04 environment.
+1. **Index invalidation.** If the C++ store indexes records by vector position,
+   deleting a record shifts every later element and invalidates the index.
+   Mitigation: rebuild the index on delete, and document the cost against
+   Python's id-keyed approach.
+2. **Float money.** Binary floating point cannot represent every decimal amount
+   exactly. Mitigation: both implementations use `double` and format to two
+   decimals, so they agree with each other; noted as a limitation.
+3. **Toolchain parity.** Timings are comparable only on one machine. Mitigation:
+   a single WSL2 Ubuntu 24.04 environment for every build and measurement.
 
 ---
 
@@ -112,41 +97,18 @@ found, including where we were wrong.
 
 | Day | Milestone | Owner |
 |---|---|---|
-| **Fri** | Shared specification, architecture, command set, repository setup | Bijay Raj KC (lead), all |
-| **Fri** | Agreement that both implementations expose identical CLI modes | All |
-| **Sat AM** | Domain model and hub in both languages | Rahul (Rust), Krinal (Go) |
-| **Sat PM** | Concurrent demo mode working end to end; unit tests | Rahul, Krinal |
+| **Fri** | Shared specification, architecture, query semantics, repositories | Bijay Raj KC (lead), all |
+| **Sat AM** | Record and store types compiling in both languages | Rahul (Python), Krinal (C++) |
+| **Sat PM** | Seeded dataset, listing and category filter working end to end | Rahul, Krinal |
 | **Sat PM** | Core-functionality report with screenshots | Bijay |
-| **Sun AM** | Filtering, search, direct messages, statistics, REPL | Rahul, Krinal |
-| **Sun AM** | Race detector and test pass in both | Krinal |
+| **Sun AM** | Date-range filter, keyword search, summary with shares, delete, REPL | Rahul, Krinal |
+| **Sun AM** | Unit tests in both; AddressSanitizer run on the C++ build | Krinal |
 | **Sun PM** | Benchmark runs and comparison report | Rahul, Bijay |
 | **Sun PM** | Presentation slides and rehearsal | All |
 
 ---
 
-## 5. Build and run
-
-Both implementations are built and run in **WSL2 Ubuntu 24.04** so that one
-machine and one set of timings apply to both.
-
-```bash
-# Rust (rustc/cargo 1.95.0)
-cd rust && cargo build --release
-./target/release/concurrent_chat demo
-./target/release/concurrent_chat bench 8 25000
-
-# Go (go 1.27.1)
-cd go && go build -o chat .
-./chat demo
-./chat bench 8 25000
-```
-
-Day 1 contains design documentation only; the commands above apply to the Day 2
-and Day 3 repositories.
-
----
-
-## 6. Repositories
+## 5. Repositories
 
 | Deliverable | Repository | Visibility |
 |---|---|---|
